@@ -1,0 +1,7 @@
+﻿################################################################################
+# Diese .gitignore-Datei wurde von Microsoft(R) Visual Studio automatisch erstellt.
+################################################################################
+
+/.vs/Fallout76Custom/v17
+/.vs/Fallout76Custom/FileContentIndex
+/obj
