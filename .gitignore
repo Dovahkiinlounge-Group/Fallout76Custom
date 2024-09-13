@@ -5,3 +5,8 @@
 /.vs/Fallout76Custom/v17
 /.vs/Fallout76Custom/FileContentIndex
 /obj
+/.vs
+/bin/Release/net8.0
+/Properties/PublishProfiles
+/Fallout76Custom.ini.csproj
+/Fallout76Custom.ini.csproj.user
