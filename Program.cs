@@ -1,4 +1,11 @@
 ﻿using Microsoft.Win32;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Threading.Tasks;
 
 namespace Fallout76ConfigEditor
 {
@@ -7,7 +14,7 @@ namespace Fallout76ConfigEditor
         static string iniFilePath;
         static Dictionary<string, string> messages;
         static string basePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Fallout76Custom");
-        static string languageFilePath = Path.Combine(basePath, "language.ini");
+        static string apiBaseUrl = "http://api.dovahkiinlounge.de/ini?lang=";
         static string exetype;
 
         static void Main(string[] args)
@@ -26,7 +33,7 @@ namespace Fallout76ConfigEditor
             }
             else
             {
-                Console.WriteLine(GetLocalizedString("Fallout76Found ") + falloutFolderPath);
+                Console.WriteLine(GetLocalizedString("Fallout76Found") + " " + falloutFolderPath);
             }
 
             // Define iniFilePath based on the executable found
@@ -158,305 +165,393 @@ namespace Fallout76ConfigEditor
             Console.WriteLine(GetLocalizedString("ChangesSavedSuccessfully"));
             Thread.Sleep(2000);
             Environment.Exit(0);
+        }
 
-            // Function to check if High Priority is already set
-            static bool IsHighPrioritySet()
+        static string DetectLanguage()
+        {
+            // Detect the current culture of the operating system
+            CultureInfo currentCulture = CultureInfo.CurrentCulture;
+            string cultureName = currentCulture.TwoLetterISOLanguageName;
+
+            // Check if the language file exists, if not, try downloading it
+            bool fileExists = EnsureLanguageFile(cultureName);
+            if (!fileExists)
             {
-                try
-                {
-                    using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@$"Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{exetype}\PerfOptions"))
-                    {
-                        if (key != null)
-                        {
-                            object value = key.GetValue("CpuPriorityClass");
-                            return value != null && (int)value == 3;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine(GetLocalizedString("RegistryReadError") + ex.Message);
-                }
-                return false;
+                // If file does not exist, fall back to English
+                cultureName = "en";
+                EnsureLanguageFile(cultureName);
             }
 
-            // Function to set the Fallout 76 process to high priority in the registry
-            static void SetHighPriority()
+            return cultureName;
+        }
+
+        // Function to ensure language file is downloaded if needed (synchronous version)
+        static bool EnsureLanguageFile(string language)
+        {
+            string localLanguageFilePath = Path.Combine(basePath, $"{language}.ini");
+
+            // Check if the specific language file exists locally
+            if (!File.Exists(localLanguageFilePath))
             {
-                try
+                // If the language is English and file doesn't exist, return false
+                if (language != "en" && language != $"{language}")
                 {
-                    using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@$"Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{exetype}\PerfOptions"))
-                    {
-                        key.SetValue("CpuPriorityClass", 3, RegistryValueKind.DWord); // 3 sets it to high priority
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine(GetLocalizedString("RegistryWriteError") + ex.Message);
-                }
-            }
-
-            // Function to remove high priority from the Fallout 76 process in the registry
-            static void RemoveHighPriority()
-            {
-                try
-                {
-                    using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@$"Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{exetype}\PerfOptions", true))
-                    {
-                        if (key != null)
-                        {
-                            key.DeleteValue("CpuPriorityClass", false);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine(GetLocalizedString("RegistryDeleteError") + ex.Message);
-                }
-            }
-
-
-            static string DetectLanguage()
-            {
-                // Detect the current culture of the operating system
-                CultureInfo currentCulture = CultureInfo.CurrentCulture;
-                string cultureName = currentCulture.TwoLetterISOLanguageName;
-
-                // Default to English if the detected language is not supported
-                if (cultureName != "en" && cultureName != $"{cultureName}")
-                {
-                    cultureName = "en";
+                    return false;
                 }
 
-                return cultureName;
-            }
+                // Check if the language file exists on the server
+                bool fileExists = CheckFileExistsOnServer(language);
 
-            static void LoadMessages(string language)
-            {
-                string languageFilePath = Path.Combine(basePath, $"{language}.ini");
-
-                if (!File.Exists(languageFilePath))
+                if (fileExists)
                 {
-                    // Fallback to English if the language file is not found
-                    languageFilePath = Path.Combine(basePath, "en.ini");
-                }
-
-                messages = new Dictionary<string, string>();
-                foreach (var line in File.ReadAllLines(languageFilePath))
-                {
-                    var parts = line.Split(new[] { '=' }, 2);
-                    if (parts.Length == 2)
-                    {
-                        messages[parts[0].Trim()] = parts[1].Trim();
-                    }
-                }
-            }
-
-            static string GetLocalizedString(string key)
-            {
-                return messages.ContainsKey(key) ? messages[key] : $"[Missing translation for {key}]";
-            }
-
-            static string FindFalloutFolderPath()
-            {
-                string currentDirectory = AppDomain.CurrentDomain.BaseDirectory;
-
-                for (int i = 0; i < 2; i++)
-                {
-                    string parentDirectory = Directory.GetParent(currentDirectory).FullName;
-
-                    if (File.Exists(Path.Combine(parentDirectory, "Fallout76.exe")) ||
-                        File.Exists(Path.Combine(parentDirectory, "Project76_GamePass.exe")))
-                    {
-                        return parentDirectory;
-                    }
-
-                    currentDirectory = parentDirectory;
-                }
-
-                Console.WriteLine(GetLocalizedString("FolderNotFoundMessage"));
-                Console.WriteLine(GetLocalizedString("PleaseEnterPathMessage"));
-                string selectedFalloutPath = Console.ReadLine();
-
-                if (Directory.Exists(selectedFalloutPath) &&
-                    (File.Exists(Path.Combine(selectedFalloutPath, "Fallout76.exe")) ||
-                     File.Exists(Path.Combine(selectedFalloutPath, "Project76_GamePass.exe"))))
-                {
-                    return selectedFalloutPath;
+                    // Download the language file
+                    string downloadUrl = $"{apiBaseUrl}{language}";
+                    Console.WriteLine("Downloading language file...");
+                    DownloadFile(downloadUrl, localLanguageFilePath);
+                    Console.WriteLine("Language file downloaded successfully.");
+                    Thread.Sleep(2500);
+                    Console.Clear();
                 }
                 else
                 {
-                    Console.WriteLine(GetLocalizedString("InvalidFolderPathMessage"));
-                    return null;
+                    Console.WriteLine($"The language file '{language}.ini' does not exist on the server. The default English language file will be installed instead. Please check back later for the translation in your preferred language.");
+                    Thread.Sleep(5000);
+                    Console.Clear();
+
                 }
+
+                return fileExists;
             }
 
-            static List<string> FindCustomBA2Files(string dataFolderPath)
+            return true;
+        }
+
+        // Function to check if the file exists on the server
+        static bool CheckFileExistsOnServer(string language)
+        {
+            string checkUrl = $"{apiBaseUrl}{language}"; // Ensure URL format is correct
+
+            using (HttpClient client = new HttpClient())
             {
-                List<string> customBA2Files = new List<string>();
-
-                if (!Directory.Exists(dataFolderPath))
+                try
                 {
-                    Console.WriteLine(GetLocalizedString("DataFolderNotFoundMessage"));
-                    return customBA2Files;
+                    // Send a GET request to check if the file exists
+                    HttpResponseMessage response = client.GetAsync(checkUrl).GetAwaiter().GetResult();
+
+                    // Log response status and URL for debugging
+                    Console.WriteLine($"Request URL: {checkUrl}");
+                    Console.WriteLine($"Response Status Code: {response.StatusCode}");
+
+                    return response.IsSuccessStatusCode;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Error checking file existence: " + ex.Message);
+                    return false;
+                }
+            }
+        }
+
+        // Function to download a file synchronously
+        static void DownloadFile(string fileUrl, string localFilePath)
+        {
+            using (HttpClient client = new HttpClient())
+            {
+                try
+                {
+                    byte[] fileBytes = client.GetByteArrayAsync(fileUrl).GetAwaiter().GetResult();
+                    File.WriteAllBytes(localFilePath, fileBytes);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Error downloading file: " + ex.Message);
+                }
+            }
+        }
+
+
+        static void LoadMessages(string language)
+        {
+            string languageFilePath = Path.Combine(basePath, $"{language}.ini");
+
+            if (!File.Exists(languageFilePath))
+            {
+                // Load default English messages if specific language file is not found
+                languageFilePath = Path.Combine(basePath, "en.ini");
+            }
+
+            messages = new Dictionary<string, string>();
+
+            foreach (string line in File.ReadLines(languageFilePath))
+            {
+                var parts = line.Split(new[] { '=' }, 2);
+                if (parts.Length == 2)
+                {
+                    messages[parts[0].Trim()] = parts[1].Trim();
+                }
+            }
+        }
+
+        static string GetLocalizedString(string key)
+        {
+            if (messages == null || !messages.ContainsKey(key))
+            {
+                return $"[Missing translation for {key}]";
+            }
+            return messages[key];
+        }
+
+        static string FindFalloutFolderPath()
+        {
+            string currentDirectory = AppDomain.CurrentDomain.BaseDirectory;
+
+            for (int i = 0; i < 2; i++)
+            {
+                string parentDirectory = Directory.GetParent(currentDirectory).FullName;
+
+                if (File.Exists(Path.Combine(parentDirectory, "Fallout76.exe")) ||
+                    File.Exists(Path.Combine(parentDirectory, "Project76_GamePass.exe")))
+                {
+                    return parentDirectory;
                 }
 
-                foreach (string file in Directory.GetFiles(dataFolderPath, "*.ba2"))
-                {
-                    if (!IsFallout76File(file))
-                    {
-                        customBA2Files.Add(file);
-                    }
-                }
+                currentDirectory = parentDirectory;
+            }
 
+            Console.WriteLine(GetLocalizedString("FolderNotFoundMessage"));
+            Console.WriteLine(GetLocalizedString("PleaseEnterPathMessage"));
+            string selectedFalloutPath = Console.ReadLine();
+
+            if (Directory.Exists(selectedFalloutPath) &&
+                (File.Exists(Path.Combine(selectedFalloutPath, "Fallout76.exe")) ||
+                 File.Exists(Path.Combine(selectedFalloutPath, "Project76_GamePass.exe"))))
+            {
+                return selectedFalloutPath;
+            }
+            else
+            {
+                Console.WriteLine(GetLocalizedString("InvalidFolderPathMessage"));
+                return null;
+            }
+        }
+
+        static List<string> FindCustomBA2Files(string dataFolderPath)
+        {
+            List<string> customBA2Files = new List<string>();
+
+            if (!Directory.Exists(dataFolderPath))
+            {
+                Console.WriteLine(GetLocalizedString("DataFolderNotFoundMessage"));
                 return customBA2Files;
             }
 
-            static bool IsFallout76File(string fileName)
+            foreach (string file in Directory.GetFiles(dataFolderPath, "*.ba2"))
             {
-                return fileName.EndsWith(".ba2", StringComparison.OrdinalIgnoreCase) &&
-                       fileName.Contains("SeventySix - ");
+                if (!IsFallout76File(file))
+                {
+                    customBA2Files.Add(file);
+                }
             }
 
-            static void SaveCheckedItems(List<string> checkedItems)
+            return customBA2Files;
+        }
+
+        static bool IsFallout76File(string fileName)
+        {
+            return fileName.EndsWith(".ba2", StringComparison.OrdinalIgnoreCase) &&
+                   fileName.Contains("SeventySix - ");
+        }
+
+        static void SaveCheckedItems(List<string> checkedItems)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            foreach (string item in checkedItems)
             {
-                StringBuilder sb = new StringBuilder();
-
-                foreach (string item in checkedItems)
-                {
-                    sb.Append(Path.GetFileName(item));
-                    sb.Append(",");
-                }
-
-                string checkedItemsString = sb.ToString().TrimEnd(',');
-
-                string[] iniLines = File.ReadAllLines(iniFilePath);
-                bool foundSection = false;
-
-                for (int i = 0; i < iniLines.Length; i++)
-                {
-                    if (iniLines[i].Trim().ToLower() == "[archive]")
-                    {
-                        foundSection = true;
-                        int j = i + 1;
-
-                        // Look for "sResourceArchive2List="
-                        while (j < iniLines.Length && !iniLines[j].StartsWith("sResourceArchive2List="))
-                        {
-                            j++;
-                        }
-
-                        if (j < iniLines.Length)
-                        {
-                            // Replace the existing line with the selected BA2 files
-                            iniLines[j] = "sResourceArchive2List=" + checkedItemsString;
-                        }
-                        else
-                        {
-                            // Add the line if it doesn't exist
-                            Array.Resize(ref iniLines, iniLines.Length + 1);
-                            iniLines[j] = "sResourceArchive2List=" + checkedItemsString;
-                        }
-
-                        // Ensure the other two lines are added below
-                        Array.Resize(ref iniLines, iniLines.Length + 2);
-                        iniLines[j + 1] = "sResourceDataDirsFinal=";   // Add sResourceDataDirsFinal
-                        iniLines[j + 2] = "bInvalidateOlderFiles=1";        // Add iPresentInterval
-
-                        break;
-                    }
-                }
-
-                if (!foundSection)
-                {
-                    // If the [Archive] section doesn't exist, add it along with the new lines
-                    Array.Resize(ref iniLines, iniLines.Length + 4);
-                    iniLines[iniLines.Length - 4] = "[Archive]";
-                    iniLines[iniLines.Length - 3] = "sResourceArchive2List=" + checkedItemsString;
-                    iniLines[iniLines.Length - 2] = "sResourceDataDirsFinal=";
-                    iniLines[iniLines.Length - 1] = "bInvalidateOlderFiles=1";
-                }
-
-                File.WriteAllLines(iniFilePath, iniLines);
+                sb.Append(Path.GetFileName(item));
+                sb.Append(",");
             }
 
+            string checkedItemsString = sb.ToString().TrimEnd(',');
 
-            static List<string> ManualFileSelection(List<string> customBA2Files)
+            string[] iniLines = File.ReadAllLines(iniFilePath);
+            bool foundSection = false;
+
+            for (int i = 0; i < iniLines.Length; i++)
             {
-                List<string> selectedFiles = new List<string>();
-
-                Console.WriteLine(GetLocalizedString("SelectBA2FilesPrompt"));
-                for (int i = 0; i < customBA2Files.Count; i++)
+                if (iniLines[i].Trim().ToLower() == "[archive]")
                 {
-                    Console.WriteLine($"{i + 1}. {Path.GetFileName(customBA2Files[i])}");
-                }
+                    foundSection = true;
+                    int j = i + 1;
 
-                Console.Write(GetLocalizedString("EnterFileNumbersPrompt") + " ");
-                string[] fileSelections = Console.ReadLine().Split(',');
-
-                foreach (string selection in fileSelections)
-                {
-                    if (int.TryParse(selection.Trim(), out int index) && index > 0 && index <= customBA2Files.Count)
+                    // Look for "sResourceArchive2List="
+                    while (j < iniLines.Length && !iniLines[j].StartsWith("sResourceArchive2List="))
                     {
-                        selectedFiles.Add(customBA2Files[index - 1]);
+                        j++;
                     }
-                }
 
-                return selectedFiles;
+                    if (j < iniLines.Length)
+                    {
+                        // Replace the existing line with the selected BA2 files
+                        iniLines[j] = "sResourceArchive2List=" + checkedItemsString;
+                    }
+                    else
+                    {
+                        // Add the line if it doesn't exist
+                        Array.Resize(ref iniLines, iniLines.Length + 1);
+                        iniLines[j] = "sResourceArchive2List=" + checkedItemsString;
+                    }
+
+                    // Ensure the other two lines are added below
+                    Array.Resize(ref iniLines, iniLines.Length + 2);
+                    iniLines[j + 1] = "sResourceDataDirsFinal=";   // Add sResourceDataDirsFinal
+                    iniLines[j + 2] = "bInvalidateOlderFiles=1";        // Add iPresentInterval
+
+                    break;
+                }
             }
 
-            static void SaveLoadReduceTime()
+            if (!foundSection)
             {
-                string[] iniLines = File.ReadAllLines(iniFilePath);
-                bool interfaceSectionExists = false;
-
-                for (int i = 0; i < iniLines.Length; i++)
-                {
-                    if (iniLines[i].Trim().ToLower() == "[interface]")
-                    {
-                        interfaceSectionExists = true;
-                        iniLines[i + 1] = "fFadeToBlackFadeSeconds=0.2000";
-                        iniLines[i + 2] = "fMinSecondsForLoadFadeIn=0.3000";
-                        break;
-                    }
-                }
-
-                if (!interfaceSectionExists)
-                {
-                    List<string> tempList = new List<string>(iniLines);
-                    tempList.Add("[Interface]");
-                    tempList.Add("fFadeToBlackFadeSeconds=0.2000");
-                    tempList.Add("fMinSecondsForLoadFadeIn=0.3000");
-                    iniLines = tempList.ToArray();
-                }
-
-                File.WriteAllLines(iniFilePath, iniLines);
+                // If the [Archive] section doesn't exist, add it along with the new lines
+                Array.Resize(ref iniLines, iniLines.Length + 4);
+                iniLines[iniLines.Length - 4] = "[Archive]";
+                iniLines[iniLines.Length - 3] = "sResourceArchive2List=" + checkedItemsString;
+                iniLines[iniLines.Length - 2] = "sResourceDataDirsFinal=";
+                iniLines[iniLines.Length - 1] = "bInvalidateOlderFiles=1";
             }
 
-            static void SaveDisableVSync()
-            {
-                string[] iniLines = File.ReadAllLines(iniFilePath);
-                bool displaySectionExists = false;
+            File.WriteAllLines(iniFilePath, iniLines);
+        }
 
-                for (int i = 0; i < iniLines.Length; i++)
+        static List<string> ManualFileSelection(List<string> customBA2Files)
+        {
+            List<string> selectedFiles = new List<string>();
+
+            Console.WriteLine(GetLocalizedString("SelectBA2FilesPrompt"));
+            for (int i = 0; i < customBA2Files.Count; i++)
+            {
+                Console.WriteLine($"{i + 1}. {Path.GetFileName(customBA2Files[i])}");
+            }
+
+            Console.Write(GetLocalizedString("EnterFileNumbersPrompt") + " ");
+            string[] fileSelections = Console.ReadLine().Split(',');
+
+            foreach (string selection in fileSelections)
+            {
+                if (int.TryParse(selection.Trim(), out int index) && index > 0 && index <= customBA2Files.Count)
                 {
-                    if (iniLines[i].Trim().ToLower() == "[display]")
+                    selectedFiles.Add(customBA2Files[index - 1]);
+                }
+            }
+
+            return selectedFiles;
+        }
+
+        static void SaveLoadReduceTime()
+        {
+            string[] iniLines = File.ReadAllLines(iniFilePath);
+            bool interfaceSectionExists = false;
+
+            for (int i = 0; i < iniLines.Length; i++)
+            {
+                if (iniLines[i].Trim().ToLower() == "[interface]")
+                {
+                    interfaceSectionExists = true;
+                    iniLines[i + 1] = "fFadeToBlackFadeSeconds=0.2000";
+                    iniLines[i + 2] = "fMinSecondsForLoadFadeIn=0.3000";
+                    break;
+                }
+            }
+
+            if (!interfaceSectionExists)
+            {
+                List<string> tempList = new List<string>(iniLines);
+                tempList.Add("[Interface]");
+                tempList.Add("fFadeToBlackFadeSeconds=0.2000");
+                tempList.Add("fMinSecondsForLoadFadeIn=0.3000");
+                iniLines = tempList.ToArray();
+            }
+
+            File.WriteAllLines(iniFilePath, iniLines);
+        }
+
+        static void SaveDisableVSync()
+        {
+            string[] iniLines = File.ReadAllLines(iniFilePath);
+            bool displaySectionExists = false;
+
+            for (int i = 0; i < iniLines.Length; i++)
+            {
+                if (iniLines[i].Trim().ToLower() == "[display]")
+                {
+                    displaySectionExists = true;
+                    iniLines[i + 1] = "iPresentInterval=0";
+                    break;
+                }
+            }
+
+            if (!displaySectionExists)
+            {
+                List<string> tempList = new List<string>(iniLines);
+                tempList.Add("[Display]");
+                tempList.Add("iPresentInterval=0");
+                iniLines = tempList.ToArray();
+            }
+
+            File.WriteAllLines(iniFilePath, iniLines);
+        }
+
+        static bool IsHighPrioritySet()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@$"Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{exetype}\PerfOptions"))
+                {
+                    if (key != null)
                     {
-                        displaySectionExists = true;
-                        iniLines[i + 1] = "iPresentInterval=0";
-                        break;
+                        object value = key.GetValue("CpuPriorityClass");
+                        return value != null && (int)value == 3;
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(GetLocalizedString("RegistryReadError") + ex.Message);
+            }
+            return false;
+        }
 
-                if (!displaySectionExists)
+        static void SetHighPriority()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@$"Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{exetype}\PerfOptions"))
                 {
-                    List<string> tempList = new List<string>(iniLines);
-                    tempList.Add("[Display]");
-                    tempList.Add("iPresentInterval=0");
-                    iniLines = tempList.ToArray();
+                    key.SetValue("CpuPriorityClass", 3, RegistryValueKind.DWord); // 3 sets it to high priority
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(GetLocalizedString("RegistryWriteError") + ex.Message);
+            }
+        }
 
-                File.WriteAllLines(iniFilePath, iniLines);
+        static void RemoveHighPriority()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@$"Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{exetype}\PerfOptions", true))
+                {
+                    if (key != null)
+                    {
+                        key.DeleteValue("CpuPriorityClass", false);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(GetLocalizedString("RegistryDeleteError") + ex.Message);
             }
         }
     }
