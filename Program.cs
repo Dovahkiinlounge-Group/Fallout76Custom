@@ -1,4 +1,5 @@
 ﻿using Microsoft.Win32;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -23,7 +24,12 @@ namespace Fallout76ConfigEditor
             string language = DetectLanguage();
             LoadMessages(language);
 
-            Console.WriteLine(GetLocalizedString("WelcomeMessage"));
+
+
+            string localizedMessage = GetLocalizedString("WelcomeMessage");
+            string version = GetVersionFromApi("https://api.dovahkiinlounge.de/version/76");
+
+            Console.WriteLine(localizedMessage + " - " + version);
 
             string falloutFolderPath = FindFalloutFolderPath();
             if (string.IsNullOrEmpty(falloutFolderPath))
@@ -165,6 +171,40 @@ namespace Fallout76ConfigEditor
             Console.WriteLine(GetLocalizedString("ChangesSavedSuccessfully"));
             Thread.Sleep(2000);
             Environment.Exit(0);
+        }
+
+        static string GetVersionFromApi(string url)
+        {
+            using (HttpClient client = new HttpClient())
+            {
+                try
+                {
+                    // Send the GET request and wait for the result
+                    HttpResponseMessage response = client.GetAsync(url).GetAwaiter().GetResult();
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        // Read the content as a string
+                        string jsonResponse = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+                        // Parse the JSON to extract the version value
+                        JObject json = JObject.Parse(jsonResponse);
+                        string version = json["version"]?.ToString();
+
+                        return version ?? "Unknown version"; // Return the version or a fallback message
+                    }
+                    else
+                    {
+                        Console.WriteLine("Error: Unable to fetch version from API.");
+                        return "Unknown version";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Error: " + ex.Message);
+                    return "Unknown version";
+                }
+            }
         }
 
         static string DetectLanguage()
